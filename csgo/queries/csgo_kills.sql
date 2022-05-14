@@ -1,5 +1,6 @@
     SELECT cpr.match_id,
        cpr.steam_id,
+       COUNT(DISTINCT cpr.map_id)                                                                                    AS maps_played,
        COUNT(crk.killer_steam_id)                                                                                 AS match_kills,
        ROUND(COUNT(crk.killer_steam_id) / COUNT(DISTINCT cpr.map_id)::NUMERIC, 4)                                 AS kills_per_map,
        ROUND(COUNT(crk.killer_steam_id) FILTER (WHERE crk.is_first_kill)::NUMERIC, 4)                                     AS first_round_kills,
@@ -46,7 +47,7 @@ WHERE cpr.map_id IN (
       AND match_id NOT IN (
         SELECT match_id
         FROM historical_csgo.csgo_match_data cmd
-        WHERE cmd.date < {date}
+        WHERE cmd.date  >= {date}
     )
 )
 GROUP BY 1, 2;
