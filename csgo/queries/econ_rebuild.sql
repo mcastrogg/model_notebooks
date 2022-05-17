@@ -1,29 +1,29 @@
 SELECT cpr.match_id,
        cpr.map_id,
        cmr.round_number,
-       cpr.team_name,
        cpr.steam_id,
-       MAX(won::INT)                                                                      AS won,
+       MAX(cpr.won::INT)                                                                      AS won,
+       max(cpr.side) as side,
       --  MAX(CASE WHEN cpr.side = 'T' THEN 1 ELSE 0 END ) as is_tside,
-       MAX((cpr.team_name = cmr.t_team)::INT)                                             AS is_tside,
+      --  MAX((cpr.team_name = cmr.t_team)::INT)                                             AS is_tside,
       --  MAX(cpr.round_start_money)                                                         AS parser_money,
        MAX(cmr.round_end_reason)                                                          AS round_end_reason,
-       COUNT(crk.kill_id) FILTER ( WHERE cw.eq_class = 'AR')                              AS rifle_kills,
-       COUNT(crk.kill_id) FILTER ( WHERE cw.eq_class = 'Sniper' AND crk.weapon_id != 309) AS sniper_kills, -- Remove AWP
-       COUNT(crk.kill_id) FILTER ( WHERE cw.eq_class = 'Grenade')                         AS grenade_kills,
-       COUNT(crk.kill_id) FILTER ( WHERE cw.eq_class = 'LMG')                             AS lmg_kills,
-       COUNT(crk.kill_id) FILTER ( WHERE cw.eq_class = 'Shotgun')                         AS shotgun_kills,
-       COUNT(crk.kill_id) FILTER ( WHERE cw.eq_class = 'SMG' AND crk.weapon_id != 106)    AS smg_kills,    --Remove P90
-       COUNT(crk.kill_id) FILTER ( WHERE cw.eq_class = 'Pistol' AND crk.weapon_id != 8)   AS pistol_kills, --Remove CZ75
-       COUNT(crk.kill_id) FILTER ( WHERE cw.eq_class = 'Melee' AND crk.weapon_id != 401)  AS melee_kills,  -- Remove Zeus
-       COUNT(crk.kill_id) FILTER ( WHERE crk.weapon_id = 309)                             AS awp_kills,
-       COUNT(crk.kill_id) FILTER ( WHERE crk.weapon_id = 106)                             AS p90_kills,
-       COUNT(crk.kill_id) FILTER ( WHERE crk.weapon_id = 8)                               AS cz75_kills,
+       COUNT(crk.killer_steam_id) FILTER ( WHERE cw.eq_class = 'AR')                              AS rifle_kills,
+       COUNT(crk.killer_steam_id) FILTER ( WHERE cw.eq_class = 'Sniper' AND crk.weapon_id != 309) AS sniper_kills, -- Remove AWP
+       COUNT(crk.killer_steam_id) FILTER ( WHERE cw.eq_class = 'Grenade')                         AS grenade_kills,
+       COUNT(crk.killer_steam_id) FILTER ( WHERE cw.eq_class = 'LMG')                             AS lmg_kills,
+       COUNT(crk.killer_steam_id) FILTER ( WHERE cw.eq_class = 'Shotgun')                         AS shotgun_kills,
+       COUNT(crk.killer_steam_id) FILTER ( WHERE cw.eq_class = 'SMG' AND crk.weapon_id != 106)    AS smg_kills,    --Remove P90
+       COUNT(crk.killer_steam_id) FILTER ( WHERE cw.eq_class = 'Pistol' AND crk.weapon_id != 8)   AS pistol_kills, --Remove CZ75
+       COUNT(crk.killer_steam_id) FILTER ( WHERE cw.eq_class = 'Melee' AND crk.weapon_id != 401)  AS melee_kills,  -- Remove Zeus
+       COUNT(crk.killer_steam_id) FILTER ( WHERE crk.weapon_id = 309)                             AS awp_kills,
+       COUNT(crk.killer_steam_id) FILTER ( WHERE crk.weapon_id = 106)                             AS p90_kills,
+       COUNT(crk.killer_steam_id) FILTER ( WHERE crk.weapon_id = 8)                               AS cz75_kills,
        COALESCE(MAX(bomb_events.bomb_plant), 0)                                           AS bomb_plants,
        COALESCE(MAX(bomb_events.bomb_defused), 0)                                         AS bomb_defused,
        COALESCE(MAX(bomb_events.bomb_exploded), 0)                                        AS bomb_exploded
 FROM historical_csgo.csgo_player_rounds cpr
-         LEFT JOIN historical_csgo.csgo_map_rounds cmr ON cmr.round_id = cpr.round_id
+    LEFT JOIN historical_csgo.csgo_map_rounds cmr ON cpr.round_id = cmr.round_id
          LEFT JOIN historical_csgo.csgo_round_kills crk ON cpr.steam_id = crk.killer_steam_id AND cpr.round_id = crk.round_id
          LEFT JOIN historical_csgo.csgo_weapons cw ON cw.weapon_id = crk.weapon_id
          LEFT JOIN (
@@ -59,4 +59,4 @@ WHERE cpr.map_id in (SELECT map_id
         FROM historical_csgo.csgo_match_data cmd
         WHERE cmd.date < {date}
     ))
-GROUP BY 1, 2, 3, 4, 5;
+GROUP BY 1, 2, 3, 4;

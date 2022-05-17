@@ -50,7 +50,7 @@ WHERE cpr.map_id IN (
       AND match_id NOT IN (
         SELECT match_id
         FROM historical_csgo.csgo_match_data cmd
-        WHERE cmd.date  >= {date}
+        WHERE cmd.date < {date}
     )
 )
 GROUP BY 1, 2;

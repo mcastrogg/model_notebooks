@@ -1,18 +1,48 @@
 import itertools
+from tracemalloc import start
 from typing import List, Dict
 from itertools import groupby
+from zipapp import create_archive
 from constants import *
+from query_reader import QueryReader
 import pandas as pd
+import psycopg2
 import time
 import csv
 
 
-# takes about 40-45 secs with using List[Dict] as input, using Dataframe takes about 5min
+# takes about 40-45 secs with using List[Dict] as input, using Dataframe takes about 5min. With ~2m rows
+# really shits the bed when we pass it ~14m
+def run_econ_rebuild_return_df(data: List[Dict]) -> pd.DataFrame:
+    data = run_econ_rebuild(data)
+    return create_match_money_df(data)
+
+
+def create_match_money_df(data: List[Dict]) -> pd.DataFrame:
+    df = pd.DataFrame(data)
+    df.to_csv('output/raw_econ_rebuild.csv', index=False)
+    money_df = df.groupby(['match_id', 'map_id', 'steam_id']).sum().reset_index()
+    money_df.to_csv('output/raw_econ_rebuild_group1.csv', index=False)
+    # money_df2 = df.groupby(['match_id', , 'steam_id']).sum().reset_index()
+    # money_df2.to_csv('output/raw_econ_rebuild_group1.csv', index=False)
+    match_money_df = money_df.groupby(['match_id', 'steam_id']).mean()
+    return match_money_df
+
+
 def run_econ_rebuild(data: List[Dict]) -> pd.DataFrame:
+    gbs = time.time()
     data = _group_bomb_data(data)
+    gbe = time.time()
+    print('Time take to group for bomb', gbe-gbs)
+    ss = time.time()
     data = sorted(data, key=lambda i: (i['map_id'], i['steam_id'], i['round_number']))
+    se = time.time()
+    print('Time taken to sort for calcing round money', se-ss)
+    scm = time.time()
     data = _calc_round_money(data)
-    return pd.DataFrame(data)
+    ecm = time.time()
+    print('time taken to calc round money', ecm-scm)
+    return data
 
 
 def _calc_round_money(data: List[Dict]):
@@ -63,10 +93,12 @@ def _calc_round_money(data: List[Dict]):
 
     # weapon_kills: weapon_name
     key_list = {x: x.split('_')[0] for x in data[0].keys() if x.endswith('_kills')}
+
     for row in data:
         row['win_streak'], row['loss_streak'], row['round_end_bonus'] = inner(row)
         row = _apply_weapon_bonus(row, key_list)
         row = _apply_bomb_bonus(row)
+        row = _calc_total_money_made(row)
     return data
 
 
@@ -90,7 +122,7 @@ def _group_bomb_data(data: List[Dict]):
     groupped_data = [{
         'map_id': k[0],
         'round_number': k[1],
-        'is_tside': k[2],
+        'side': k[2],
         'data': list(group)
     } for k, group in _group_list(data)]
 
@@ -110,7 +142,7 @@ def _group_bomb_data(data: List[Dict]):
 
 
 def _group_list(data: List[Dict]) -> itertools.groupby:
-    return groupby(data, lambda x: [x['map_id'], x['round_number'], x['is_tside']])
+    return groupby(data, lambda x: [x['map_id'], x['round_number'], x['side']])
 
 
 def _apply_weapon_bonus(row: Dict, weapon_dict: Dict[str, str]) -> Dict:
@@ -128,7 +160,7 @@ def _apply_bomb_bonus(row: Dict) -> Dict:
     row['bomb_defuse_bonus'] = 0
     row['team_bomb_defuse_bonus'] = 0
 
-    if row['is_tside'] == 1:
+    if row['side'] == 'T':
         row['bomb_plant_bonus'] = PLAYER_BOMB_PLANT_BONUS if row['bomb_plants'] else 0
         if row['won'] == 1:
             row['team_bomb_explode_bonus'] = TEAM_BOMB_PLANT_BONUS if row['team_bomb_exploded'] else 0
@@ -141,16 +173,9 @@ def _apply_bomb_bonus(row: Dict) -> Dict:
     return row
 
 
-def _calc_total_money(mdf: pd.DataFrame) -> pd.DataFrame:
-    mdf['total_money_made'] = mdf[[x for x in mdf.columns if x.endswith('_bonus')]].sum(axis=1)
-    money_df = mdf.groupby(['match_id', 'map_id', 'steam_id']).sum()['total_money_made']
-    money_df = money_df.reset_index()
-    print(f'moneydf: {money_df.shape}')
-    match_money_df = money_df.groupby(['match_id', 'steam_id']).agg(total_money_per_map=('total_money_made', 'mean'),
-                                                                    total_money=(
-                                                                    'total_money_made', 'sum')).reset_index()
-    print(f'match_money: {match_money_df.shape}')
-    return match_money_df
+def _calc_total_money_made(row: Dict) -> Dict:
+    row['total_money_made'] = sum([v for k,v in row.items() if k.endswith('_bonus')])
+    return row
 
 
 def read_in_csv_as_list(path):
@@ -167,8 +192,88 @@ def read_in_csv_as_list(path):
     return csv_data
 
 
+def result_group_check(data: List[Dict]):
+    # If one player on a map has incorrect row count, then they will keep being added to pending data
+    valid_data = []
+    pending_data = []
+    grouped_data = groupby(data, lambda x: x['map_id'])
+    for key, group in grouped_data:
+        group = list(group)
+        steam_id_group = {steam_id: len([x for x in data])
+                          for steam_id, data in groupby(group, lambda x: x['steam_id'])}
+        if len(steam_id_group) != 10:
+            # not enough steam_ids
+            pending_data.extend(group)
+            continue
+
+        vals = list(steam_id_group.values())
+        max_value = max(vals)
+
+        if vals.count(max_value) != len(vals):
+            # not all steam_ids have mac row
+            pending_data.extend(group)
+        else:
+            valid_data.extend(group)
+
+    return valid_data, pending_data
+
+
+def create_connection(): 
+    return psycopg2.connect(
+        dbname='main',
+        host='main-us-e2.cmbsiiqeauby.us-east-2.rds.amazonaws.com',
+        port=5432,
+        user='doadmin',
+        password='i39kew8n7jcat7l9'
+    )
+
+
+def big_fetch(connection, query, cursor=None, fetch_size=30000):
+    if cursor:
+        cursor = connection.cursor('big_fetch_cursor', cursor_factory = cursor)
+    else:
+        cursor = connection.cursor('big_fetch_crusor')
+
+    pending_results = []
+    results = []
+    cols = []
+    cursor.execute(query)
+
+    start_total_time = time.time()
+    while True:
+        start_time = time.time()
+        rows = cursor.fetchmany(fetch_size)
+        if not cols:
+            cols = [desc[0] for desc in cursor.description]
+        if not rows:
+            break
+        end_time = time.time()
+        print('Time elapsed', end_time - start_time)
+
+        rows = [dict(zip(cols, x)) for x in rows]
+        rows.extend(pending_results)
+        valid_rows, pending_rows = result_group_check(rows)
+        processed_rows = run_econ_rebuild(valid_rows)
+        results.extend(processed_rows)
+        pending_results = pending_rows
+
+    end_total_time = time.time()
+
+    print('Total time elapsed', end_total_time - start_total_time)
+    print(f'Length of Results: {len(results)}')
+    print(f'Sample Result: {results[0]}')
+    cursor.close()
+    return results
+
+
 if __name__ == '__main__':
-    print('Reading in csv')
-    raw_data = read_in_csv_as_list('data/base_econ_df.csv')
-    run_econ_rebuild(raw_data)
+    qr = QueryReader('queries')
+    econ_query = qr.read_query('econ_mat_view.sql').format(date="'2021-05-01'")
+    # print('Reading in csv')
+    # raw_data = read_in_csv_as_list('data/base_econ_df.csv')
+    conn = create_connection()
+    econ_data = big_fetch(conn, econ_query, fetch_size=500000)
+    econ_df = create_match_money_df(econ_data)
+    econ_df.to_csv('output/match_money_df.csv', index=False)
+    # run_econ_rebuild(raw_data)
     # run_econ_rebuild(econ_df)

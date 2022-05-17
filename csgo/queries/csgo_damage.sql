@@ -157,7 +157,7 @@ WHERE (cw.weapon_id + 100 - 1) / 100 NOT IN (0) and
       AND match_id NOT IN (
         SELECT match_id
         FROM historical_csgo.csgo_match_data cmd
-        WHERE cmd.date  >= {date}
+        WHERE cmd.date < {date}
     )
 )-- Remove generic damage
 GROUP BY 1, 2;

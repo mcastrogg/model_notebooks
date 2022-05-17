@@ -10,6 +10,10 @@ xgboost = "*"
 pandas = "*"
 psycopg2 = "*"
 sklearn = "*"
+matplotlib = "*"
+sqlalchemy = "*"
+mlflow = "*"
+boto3 = "*"
 
 [dev-packages]
 
