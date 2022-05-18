@@ -1,12 +1,8 @@
-import itertools
-from tracemalloc import start
+from games.utils.query_reader import QueryReader
+from games.csgo.constants import *
 from typing import List, Dict
 from itertools import groupby
-from zipapp import create_archive
-from constants import *
-from query_reader import QueryReader
 import pandas as pd
-import psycopg2
 import time
 import csv
 
@@ -15,10 +11,17 @@ import csv
 # really shits the bed when we pass it ~14m
 def run_econ_rebuild_return_df(data: List[Dict]) -> pd.DataFrame:
     data = run_econ_rebuild(data)
-    return create_match_money_df(data)
+    return _create_match_money_df(data)
 
 
-def create_match_money_df(data: List[Dict]) -> pd.DataFrame:
+def run_econ_rebuild(data: List[Dict]) -> List[Dict]:
+    data = _group_bomb_data(data)
+    data = sorted(data, key=lambda i: (i['map_id'], i['steam_id'], i['round_number']))
+    data = _calc_round_money(data)
+    return data
+
+
+def _create_match_money_df(data: List[Dict]) -> pd.DataFrame:
     df = pd.DataFrame(data)
     df.to_csv('output/raw_econ_rebuild.csv', index=False)
     money_df = df.groupby(['match_id', 'map_id', 'steam_id']).sum().reset_index()
@@ -27,22 +30,6 @@ def create_match_money_df(data: List[Dict]) -> pd.DataFrame:
     # money_df2.to_csv('output/raw_econ_rebuild_group1.csv', index=False)
     match_money_df = money_df.groupby(['match_id', 'steam_id']).mean()
     return match_money_df
-
-
-def run_econ_rebuild(data: List[Dict]) -> pd.DataFrame:
-    gbs = time.time()
-    data = _group_bomb_data(data)
-    gbe = time.time()
-    print('Time take to group for bomb', gbe-gbs)
-    ss = time.time()
-    data = sorted(data, key=lambda i: (i['map_id'], i['steam_id'], i['round_number']))
-    se = time.time()
-    print('Time taken to sort for calcing round money', se-ss)
-    scm = time.time()
-    data = _calc_round_money(data)
-    ecm = time.time()
-    print('time taken to calc round money', ecm-scm)
-    return data
 
 
 def _calc_round_money(data: List[Dict]):
@@ -141,7 +128,7 @@ def _group_bomb_data(data: List[Dict]):
     return new_data
 
 
-def _group_list(data: List[Dict]) -> itertools.groupby:
+def _group_list(data: List[Dict]) -> groupby:
     return groupby(data, lambda x: [x['map_id'], x['round_number'], x['side']])
 
 
@@ -218,17 +205,7 @@ def result_group_check(data: List[Dict]):
     return valid_data, pending_data
 
 
-def create_connection(): 
-    return psycopg2.connect(
-        dbname='main',
-        host='main-us-e2.cmbsiiqeauby.us-east-2.rds.amazonaws.com',
-        port=5432,
-        user='doadmin',
-        password='i39kew8n7jcat7l9'
-    )
-
-
-def big_fetch(connection, query, cursor=None, fetch_size=30000):
+def _big_fetch(connection, query, cursor=None, fetch_size=30000):
     if cursor:
         cursor = connection.cursor('big_fetch_cursor', cursor_factory = cursor)
     else:
@@ -271,9 +248,10 @@ if __name__ == '__main__':
     econ_query = qr.read_query('econ_mat_view.sql').format(date="'2021-05-01'")
     # print('Reading in csv')
     # raw_data = read_in_csv_as_list('data/base_econ_df.csv')
+    from games.utils.conn import create_connection
     conn = create_connection()
-    econ_data = big_fetch(conn, econ_query, fetch_size=500000)
-    econ_df = create_match_money_df(econ_data)
+    econ_data = _big_fetch(conn, econ_query, fetch_size=500000)
+    econ_df = _create_match_money_df(econ_data)
     econ_df.to_csv('output/match_money_df.csv', index=False)
     # run_econ_rebuild(raw_data)
     # run_econ_rebuild(econ_df)
